@@ -9,6 +9,7 @@ on:
 permissions:
   pull-requests: write
   contents: write
+  checks: write
 
 jobs:
   guide:
@@ -66,6 +67,19 @@ jobs:
                 });
               }
             }
+
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Release flow label required',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion: 'failure',
+              output: {
+                title: '⚠️ リリースフローが未選択です',
+                summary: '/ship・/show・/ask のいずれかでリリースフローを選択してください。',
+              },
+            });
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -130,11 +144,28 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
               labels: ['ship'],
+            });
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Release flow label required',
+              head_sha: pr.head.sha,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: '🚢 Ship — マージ準備完了',
+                summary: 'レビューなしで進められます。準備ができたらマージしてください。',
+              },
             });
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -154,11 +185,28 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
               labels: ['show'],
+            });
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Release flow label required',
+              head_sha: pr.head.sha,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: '👀 Show — 変更サマリーの追記をお願いします',
+                summary: 'マージ前に変更サマリーをPRに追記してください。',
+              },
             });
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -188,6 +236,11 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
             const prAuthor = context.payload.issue.user.login;
 
             const { data: collaborators } = await github.rest.repos.listCollaborators({
@@ -213,6 +266,18 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               labels: ['needs-review'],
+            });
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Release flow label required',
+              head_sha: pr.head.sha,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: '🙋 Ask — レビュー待ち',
+                summary: 'レビュワーがアサインされました。承認後にマージしてください。',
+              },
             });
 
             const reviewerMentions = reviewers.map(r => `@${r}`).join(', ');
