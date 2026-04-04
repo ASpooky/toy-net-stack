@@ -2,7 +2,7 @@ name: Ship Show Ask
 
 on:
   pull_request:
-    types: [opened, synchronize, labeled, unlabeled, reopened]
+    types: [opened, synchronize, reopened]
   issue_comment:
     types: [created]
 
@@ -40,9 +40,22 @@ jobs:
               ].join('\n')
             });
 
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Release flow label required',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion: 'failure',
+              output: {
+                title: 'リリースフローが未選択です',
+                summary: '/ship・/show・/ask のいずれかでリリースフローを選択してください。',
+              },
+            });
+
   reset-on-push:
     name: Reset label on new commit
-    if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+    if: github.event_name == 'pull_request' && (github.event.action == 'synchronize' || github.event.action == 'reopened')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
@@ -76,7 +89,7 @@ jobs:
               status: 'completed',
               conclusion: 'failure',
               output: {
-                title: '⚠️ リリースフローが未選択です',
+                title: 'リリースフローが未選択です',
                 summary: '/ship・/show・/ask のいずれかでリリースフローを選択してください。',
               },
             });
@@ -86,32 +99,11 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: [
-                '🔄 新しいコミットが追加されたため、リリースフローのラベルをリセットしました。',
+                '新しいコミットが追加されたため、リリースフローのラベルをリセットしました。',
                 '',
                 '`/ship` / `/show` / `/ask` のいずれかで再度選択してください。',
               ].join('\n'),
             });
-
-  check-label:
-    name: Release flow label required
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const names = currentLabels.map(l => l.name);
-            const hasLabel = names.includes('ship') || names.includes('show') || names.includes('needs-review');
-
-            if (!hasLabel) {
-              core.setFailed('/ship・/show・/ask のいずれかでリリースフローを選択してください。');
-            }
 
   ship-show-ask:
     name: Handle command
@@ -163,7 +155,7 @@ jobs:
               status: 'completed',
               conclusion: 'success',
               output: {
-                title: '🚢 Ship — マージ準備完了',
+                title: 'Ship — マージ準備完了',
                 summary: 'レビューなしで進められます。準備ができたらマージしてください。',
               },
             });
@@ -172,7 +164,7 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: [
-                '🚢 **Ship** と判断されました。',
+                '**Ship** と判断されました。',
                 '',
                 'レビューなしで進めて問題ありません。',
                 '準備ができたらご自身のタイミングでマージしてください。',
@@ -204,7 +196,7 @@ jobs:
               status: 'completed',
               conclusion: 'success',
               output: {
-                title: '👀 Show — 変更サマリーの追記をお願いします',
+                title: 'Show — 変更サマリーの追記をお願いします',
                 summary: 'マージ前に変更サマリーをPRに追記してください。',
               },
             });
@@ -213,7 +205,7 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: [
-                '👀 **Show** と判断されました。',
+                '**Show** と判断されました。',
                 '',
                 'マージ前に、このPRの説明欄またはコメントに変更サマリーを追記してください：',
                 '',
@@ -275,7 +267,7 @@ jobs:
               status: 'completed',
               conclusion: 'success',
               output: {
-                title: '🙋 Ask — レビュー待ち',
+                title: 'Ask — レビュー待ち',
                 summary: 'レビュワーがアサインされました。承認後にマージしてください。',
               },
             });
@@ -286,7 +278,7 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: [
-                '🙋 **Ask** と判断されました。',
+                '**Ask** と判断されました。',
                 '',
                 reviewers.length > 0
                   ? `${reviewerMentions} にレビューをリクエストしました。承認後にマージしてください。`
