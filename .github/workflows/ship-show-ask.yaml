@@ -31,9 +31,9 @@ jobs:
                 '',
                 '| コマンド | モード | 説明 |',
                 '|----------|--------|------|',
-                '| `/ship`  | Ship   | レビューなしで即マージ・リリース |',
-                '| `/show`  | Show   | マージして変更をチームに共有 |',
-                '| `/ask`   | Ask    | レビューをリクエストして承認後にマージ |',
+                '| `/ship`  | Ship   | レビューなしで進める。準備ができたら自分でマージ |',
+                '| `/show`  | Show   | 変更サマリーを追記してチームに共有 |',
+                '| `/ask`   | Ask    | レビュワーをアサインして承認を待つ |',
                 '',
                 '> コマンドはPR作成者のみ使用できます。',
               ].join('\n')
@@ -49,58 +49,23 @@ jobs:
     steps:
       - name: Parse command
         id: parse
-        run: |
-          BODY="${{ github.event.comment.body }}"
-          if [[ "$BODY" == "/ship"* ]]; then
-            echo "mode=ship" >> $GITHUB_OUTPUT
-          elif [[ "$BODY" == "/show"* ]]; then
-            echo "mode=show" >> $GITHUB_OUTPUT
-          elif [[ "$BODY" == "/ask"* ]]; then
-            echo "mode=ask" >> $GITHUB_OUTPUT
-          else
-            echo "mode=none" >> $GITHUB_OUTPUT
-          fi
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const body = context.payload.comment.body.trim();
+            if (body.startsWith('/ship')) {
+              core.setOutput('mode', 'ship');
+            } else if (body.startsWith('/show')) {
+              core.setOutput('mode', 'show');
+            } else if (body.startsWith('/ask')) {
+              core.setOutput('mode', 'ask');
+            } else {
+              core.setOutput('mode', 'none');
+            }
 
-      - name: Ship — auto merge
+      - name: Ship — ready to merge
         if: steps.parse.outputs.mode == 'ship'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            await github.rest.pulls.merge({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-              merge_method: 'squash',
-            });
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: '🚢 **Ship**: レビューなしでマージしました。',
-            });
-
-      - name: Show — merge and notify
-        if: steps.parse.outputs.mode == 'show'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            await github.rest.pulls.merge({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-              merge_method: 'squash',
-            });
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: '👀 **Show**: マージしました。チームへの共有として記録します。',
-            });
-
-      - name: Ask — request review
-        if: steps.parse.outputs.mode == 'ask'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -109,11 +74,97 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              labels: ['needs-review'],
+              labels: ['ship'],
             });
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: '🙋 **Ask**: レビューをリクエストしました。承認後にマージされます。',
+              body: [
+                '🚢 **Ship** と判断されました。',
+                '',
+                'レビューなしで進めて問題ありません。',
+                '準備ができたらご自身のタイミングでマージしてください。',
+              ].join('\n'),
+            });
+
+      - name: Show — request summary
+        if: steps.parse.outputs.mode == 'show'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['show'],
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '👀 **Show** と判断されました。',
+                '',
+                'マージ前に、このPRの説明欄またはコメントに変更サマリーを追記してください：',
+                '',
+                '```',
+                '## 変更サマリー',
+                '- 変更内容1',
+                '- 変更内容2',
+                '',
+                '## 背景・理由',
+                '（なぜこの変更が必要だったか）',
+                '```',
+                '',
+                'サマリーの追記が完了したらマージしてください。',
+              ].join('\n'),
+            });
+
+      - name: Ask — assign reviewers
+        if: steps.parse.outputs.mode == 'ask'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prAuthor = context.payload.issue.user.login;
+
+            const { data: collaborators } = await github.rest.repos.listCollaborators({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const reviewers = collaborators
+              .map(c => c.login)
+              .filter(login => login !== prAuthor);
+
+            if (reviewers.length > 0) {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                reviewers,
+              });
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['needs-review'],
+            });
+
+            const reviewerMentions = reviewers.map(r => `@${r}`).join(', ');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '🙋 **Ask** と判断されました。',
+                '',
+                reviewers.length > 0
+                  ? `${reviewerMentions} にレビューをリクエストしました。承認後にマージしてください。`
+                  : 'レビュワーが見つかりませんでした。手動でレビュワーをアサインしてください。',
+              ].join('\n'),
             });
