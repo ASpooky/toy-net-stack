@@ -1,12 +1,11 @@
 name: Ship Show Ask
 
 on:
-  push:
-    pull_request:
-      types: [opened, synchronize]
+  pull_request:
+    types: [opened, synchronize]
 
 permissions:
-  pull_request: write
+  pull-requests: write
 
 jobs:
 
