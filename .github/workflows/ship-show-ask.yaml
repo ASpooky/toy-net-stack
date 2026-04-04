@@ -2,28 +2,118 @@ name: Ship Show Ask
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened]
+  issue_comment:
+    types: [created]
 
 permissions:
   pull-requests: write
+  contents: write
 
 jobs:
-
-  comment:
+  guide:
+    name: Post usage guide
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: comment pr
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
-          github-token: ${{secrets.GITHUB_TOKEN}}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const commentBody = `こんにちは！👋
-            これはGitHub Actionsによって自動生成されたコメントです。
-            現在のコミットハッシュ: \`${context.sha}\``;
-
             await github.rest.issues.createComment({
-              issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: commentBody
+              issue_number: context.issue.number,
+              body: [
+                '## Ship / Show / Ask',
+                '',
+                'このPRのリリースフローをコメントで選択してください：',
+                '',
+                '| コマンド | モード | 説明 |',
+                '|----------|--------|------|',
+                '| `/ship`  | Ship   | レビューなしで即マージ・リリース |',
+                '| `/show`  | Show   | マージして変更をチームに共有 |',
+                '| `/ask`   | Ask    | レビューをリクエストして承認後にマージ |',
+                '',
+                '> コマンドはPR作成者のみ使用できます。',
+              ].join('\n')
+            });
+
+  ship-show-ask:
+    name: Handle command
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      github.event.comment.user.login == github.event.issue.user.login
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse command
+        id: parse
+        run: |
+          BODY="${{ github.event.comment.body }}"
+          if [[ "$BODY" == "/ship"* ]]; then
+            echo "mode=ship" >> $GITHUB_OUTPUT
+          elif [[ "$BODY" == "/show"* ]]; then
+            echo "mode=show" >> $GITHUB_OUTPUT
+          elif [[ "$BODY" == "/ask"* ]]; then
+            echo "mode=ask" >> $GITHUB_OUTPUT
+          else
+            echo "mode=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Ship — auto merge
+        if: steps.parse.outputs.mode == 'ship'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              merge_method: 'squash',
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '🚢 **Ship**: レビューなしでマージしました。',
+            });
+
+      - name: Show — merge and notify
+        if: steps.parse.outputs.mode == 'show'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              merge_method: 'squash',
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '👀 **Show**: マージしました。チームへの共有として記録します。',
+            });
+
+      - name: Ask — request review
+        if: steps.parse.outputs.mode == 'ask'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['needs-review'],
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '🙋 **Ask**: レビューをリクエストしました。承認後にマージされます。',
             });
